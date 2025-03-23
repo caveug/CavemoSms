@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -6,7 +6,10 @@ import {
   TouchableOpacity,
   TextInput,
   FlatList,
+  Alert,
+  ActivityIndicator,
 } from "react-native";
+import { useRouter } from "expo-router";
 import { Button } from "./ui/Button";
 import {
   Upload,
@@ -16,15 +19,22 @@ import {
   FileText,
   UserPlus,
   Users,
+  ArrowLeft,
 } from "lucide-react-native";
+import * as FileStorage from "../utils/fileStorage";
+import * as Contacts from "expo-contacts";
 
 type Contact = {
+  id?: string;
   name: string;
   phone: string;
+  email?: string;
+  category?: string;
   valid: boolean;
 };
 
 export default function ImportContactsScreen() {
+  const router = useRouter();
   const [step, setStep] = useState<
     "upload" | "preview" | "mapping" | "validation" | "complete"
   >("upload");
@@ -33,22 +43,300 @@ export default function ImportContactsScreen() {
   const [mappedFields, setMappedFields] = useState<{
     name: string;
     phone: string;
+    email?: string;
+    category?: string;
   }>({ name: "", phone: "" });
-  const [previewData, setPreviewData] = useState<string[][]>([]);
+  const [previewData, setPreviewData] = useState<any[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [groupName, setGroupName] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [fileColumns, setFileColumns] = useState<string[]>([]);
+  const [fileType, setFileType] = useState<"csv" | "excel" | "device">("csv");
 
-  // Dummy data for preview
-  const dummyPreviewData = [
-    ["John Doe", "+1234567890", "john@example.com", "Customer"],
-    ["Jane Smith", "+1987654321", "jane@example.com", "Lead"],
-    ["Bob Johnson", "+1122334455", "bob@example.com", "Customer"],
-    ["Alice Brown", "+15556667777", "alice@example.com", "Lead"],
-  ];
+  // Handle file selection
+  const handleFileSelect = async () => {
+    try {
+      setLoading(true);
+      const document = await FileStorage.pickDocument();
 
-  // Complete the rest of the component implementation
+      if (!document) {
+        setLoading(false);
+        return;
+      }
+
+      setFileName(document.name);
+
+      // Determine file type
+      const fileExtension = document.name.split(".").pop()?.toLowerCase();
+      let parsedData;
+
+      if (fileExtension === "csv") {
+        setFileType("csv");
+        parsedData = await FileStorage.parseCSVFile(document.uri);
+      } else if (fileExtension === "xlsx" || fileExtension === "xls") {
+        setFileType("excel");
+        parsedData = await FileStorage.parseExcelFile(document.uri);
+      } else {
+        Alert.alert("Unsupported File", "Please select a CSV or Excel file.");
+        setLoading(false);
+        return;
+      }
+
+      if (parsedData && parsedData.length > 0) {
+        setPreviewData(parsedData);
+
+        // Extract column headers
+        const columns = Object.keys(parsedData[0]);
+        setFileColumns(columns);
+
+        // Try to auto-map fields
+        const nameField = columns.find(
+          (col) =>
+            col.toLowerCase().includes("name") ||
+            col.toLowerCase().includes("contact"),
+        );
+
+        const phoneField = columns.find(
+          (col) =>
+            col.toLowerCase().includes("phone") ||
+            col.toLowerCase().includes("mobile") ||
+            col.toLowerCase().includes("cell"),
+        );
+
+        const emailField = columns.find((col) =>
+          col.toLowerCase().includes("email"),
+        );
+
+        const categoryField = columns.find(
+          (col) =>
+            col.toLowerCase().includes("category") ||
+            col.toLowerCase().includes("group") ||
+            col.toLowerCase().includes("type"),
+        );
+
+        setMappedFields({
+          name: nameField || "",
+          phone: phoneField || "",
+          email: emailField,
+          category: categoryField,
+        });
+
+        setFileSelected(true);
+        setStep("preview");
+      } else {
+        Alert.alert("Empty File", "The selected file contains no data.");
+      }
+    } catch (error) {
+      console.error("Error selecting file:", error);
+      Alert.alert("Error", "Failed to read the file. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle device contacts import
+  const handleDeviceContactsImport = async () => {
+    try {
+      setLoading(true);
+      setFileType("device");
+
+      const { status } = await Contacts.requestPermissionsAsync();
+
+      if (status !== "granted") {
+        Alert.alert(
+          "Permission Denied",
+          "Please grant contacts permission to import contacts.",
+        );
+        setLoading(false);
+        return;
+      }
+
+      const { data } = await Contacts.getContactsAsync({
+        fields: [
+          Contacts.Fields.Name,
+          Contacts.Fields.PhoneNumbers,
+          Contacts.Fields.Emails,
+        ],
+      });
+
+      if (data.length > 0) {
+        // Transform contacts to our format
+        const formattedContacts = data
+          .filter(
+            (contact) =>
+              contact.name &&
+              contact.phoneNumbers &&
+              contact.phoneNumbers.length > 0,
+          )
+          .map((contact) => ({
+            id: contact.id,
+            name: contact.name,
+            phone: contact.phoneNumbers ? contact.phoneNumbers[0].number : "",
+            email:
+              contact.emails && contact.emails.length > 0
+                ? contact.emails[0].email
+                : "",
+          }));
+
+        setPreviewData(formattedContacts);
+        setFileName(`Device Contacts (${formattedContacts.length})`);
+        setFileSelected(true);
+
+        // For device contacts, we already know the mapping
+        setMappedFields({
+          name: "name",
+          phone: "phone",
+          email: "email",
+        });
+
+        // Skip to validation step
+        const validatedContacts = formattedContacts.map((contact) => ({
+          ...contact,
+          valid:
+            contact.phone && contact.phone.replace(/[^0-9]/g, "").length >= 10,
+        }));
+
+        setContacts(validatedContacts);
+        setStep("validation");
+      } else {
+        Alert.alert("No Contacts", "No contacts found on your device.");
+      }
+    } catch (error) {
+      console.error("Error importing device contacts:", error);
+      Alert.alert("Error", "Failed to import contacts from your device.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Process contacts after mapping
+  const processContacts = () => {
+    if (!mappedFields.name || !mappedFields.phone) {
+      Alert.alert("Missing Fields", "Please map both name and phone fields.");
+      return;
+    }
+
+    try {
+      const processedContacts = previewData.map((row) => {
+        const contact: Contact = {
+          name: row[mappedFields.name] || "",
+          phone: row[mappedFields.phone] || "",
+          valid: false,
+        };
+
+        if (mappedFields.email) {
+          contact.email = row[mappedFields.email];
+        }
+
+        if (mappedFields.category) {
+          contact.category = row[mappedFields.category];
+        }
+
+        // Validate phone number (simple validation)
+        const cleanPhone = contact.phone.replace(/[^0-9]/g, "");
+        contact.valid = cleanPhone.length >= 10;
+
+        return contact;
+      });
+
+      setContacts(processedContacts);
+      setStep("validation");
+    } catch (error) {
+      console.error("Error processing contacts:", error);
+      Alert.alert(
+        "Error",
+        "Failed to process contacts. Please check your mapping.",
+      );
+    }
+  };
+
+  // Save contacts
+  const saveContacts = async (asGroup: boolean) => {
+    if (asGroup && !groupName) {
+      Alert.alert(
+        "Missing Group Name",
+        "Please enter a name for this contact group.",
+      );
+      return;
+    }
+
+    try {
+      setLoading(true);
+
+      // Filter out invalid contacts
+      const validContacts = contacts.filter((contact) => contact.valid);
+
+      if (validContacts.length === 0) {
+        Alert.alert(
+          "No Valid Contacts",
+          "There are no valid contacts to save.",
+        );
+        setLoading(false);
+        return;
+      }
+
+      // Save contacts to file storage
+      const savedPath = await FileStorage.saveContacts(
+        validContacts,
+        asGroup ? groupName : "Imported_Contacts",
+      );
+
+      setLoading(false);
+
+      Alert.alert(
+        "Import Successful",
+        `Successfully imported ${validContacts.length} contacts${asGroup ? ` to group "${groupName}"` : ""}.`,
+        [
+          {
+            text: "OK",
+            onPress: () => router.push("/components/ContactListScreen"),
+          },
+        ],
+      );
+    } catch (error) {
+      console.error("Error saving contacts:", error);
+      setLoading(false);
+      Alert.alert("Error", "Failed to save contacts. Please try again.");
+    }
+  };
+
+  // Render column mapping options
+  const renderColumnOptions = (field: string) => {
+    return fileColumns.map((column, index) => (
+      <TouchableOpacity
+        key={index}
+        onPress={() => setMappedFields({ ...mappedFields, [field]: column })}
+        className={`p-2 rounded-md mb-2 ${mappedFields[field] === column ? "bg-indigo-100 border border-indigo-300" : "bg-gray-50"}`}
+      >
+        <Text
+          className={`${mappedFields[field] === column ? "text-indigo-700" : "text-gray-700"}`}
+        >
+          {column}
+        </Text>
+      </TouchableOpacity>
+    ));
+  };
+
+  // Loading overlay
+  if (loading) {
+    return (
+      <View className="flex-1 bg-white justify-center items-center">
+        <ActivityIndicator size="large" color="#6366F1" />
+        <Text className="mt-4 text-gray-600">Processing...</Text>
+      </View>
+    );
+  }
+
   return (
     <View className="flex-1 bg-white p-4">
+      {/* Header with back button */}
+      <View className="flex-row items-center mb-6">
+        <TouchableOpacity onPress={() => router.back()} className="p-2 mr-2">
+          <ArrowLeft size={24} color="#4B5563" />
+        </TouchableOpacity>
+        <Text className="text-xl font-bold text-gray-800">Import Contacts</Text>
+      </View>
+
       {step === "upload" && (
         <View className="flex-1 justify-center items-center">
           <View className="bg-gray-50 p-6 rounded-xl w-full max-w-md border border-gray-200">
@@ -58,30 +346,21 @@ export default function ImportContactsScreen() {
                 Import Contacts
               </Text>
               <Text className="text-sm text-gray-500 text-center mt-2">
-                Upload a CSV file with your contacts or import from your device
+                Upload a CSV/Excel file with your contacts or import from your
+                device
               </Text>
             </View>
 
             <Button
-              onPress={() => {
-                setFileSelected(true);
-                setFileName("contacts.csv");
-                setPreviewData(dummyPreviewData);
-                setStep("preview");
-              }}
+              onPress={handleFileSelect}
               className="mb-3 bg-indigo-600"
               icon={<FileText size={18} color="white" />}
             >
-              Select CSV File
+              Select CSV/Excel File
             </Button>
 
             <Button
-              onPress={() => {
-                setFileSelected(true);
-                setFileName("Device Contacts");
-                setPreviewData(dummyPreviewData);
-                setStep("preview");
-              }}
+              onPress={handleDeviceContactsImport}
               variant="outline"
               className="border-indigo-600"
               icon={<UserPlus size={18} color="#6366F1" />}
@@ -108,24 +387,33 @@ export default function ImportContactsScreen() {
             <ScrollView horizontal>
               <View>
                 <View className="flex-row bg-gray-100 p-3">
-                  <Text className="font-medium w-32">Name</Text>
-                  <Text className="font-medium w-32">Phone</Text>
-                  <Text className="font-medium w-32">Email</Text>
-                  <Text className="font-medium w-24">Category</Text>
+                  {fileColumns.map((column, index) => (
+                    <Text key={index} className="font-medium w-32">
+                      {column}
+                    </Text>
+                  ))}
                 </View>
                 <FlatList
-                  data={previewData}
+                  data={previewData.slice(0, 5)} // Show only first 5 rows for preview
                   renderItem={({ item }) => (
                     <View className="flex-row border-t border-gray-200 p-3">
-                      <Text className="w-32">{item[0]}</Text>
-                      <Text className="w-32">{item[1]}</Text>
-                      <Text className="w-32">{item[2]}</Text>
-                      <Text className="w-24">{item[3]}</Text>
+                      {fileColumns.map((column, index) => (
+                        <Text key={index} className="w-32">
+                          {item[column]}
+                        </Text>
+                      ))}
                     </View>
                   )}
                   keyExtractor={(_, index) => index.toString()}
                   scrollEnabled={false}
                 />
+                {previewData.length > 5 && (
+                  <View className="p-3 border-t border-gray-200 bg-gray-50">
+                    <Text className="text-gray-500 italic">
+                      + {previewData.length - 5} more rows
+                    </Text>
+                  </View>
+                )}
               </View>
             </ScrollView>
           </View>
@@ -152,55 +440,40 @@ export default function ImportContactsScreen() {
         <View className="flex-1">
           <Text className="text-lg font-bold mb-2">Map Fields</Text>
           <Text className="text-sm text-gray-500 mb-4">
-            Match your CSV columns to contact fields
+            Match your file columns to contact fields
           </Text>
 
           <View className="mb-4">
-            <Text className="font-medium mb-2">Name Field</Text>
+            <Text className="font-medium mb-2">
+              Name Field <Text className="text-red-500">*</Text>
+            </Text>
             <View className="border border-gray-200 rounded-lg p-3">
-              <TouchableOpacity
-                onPress={() =>
-                  setMappedFields({ ...mappedFields, name: "Column 1" })
-                }
-                className={`p-2 rounded-md mb-2 ${mappedFields.name === "Column 1" ? "bg-indigo-100 border border-indigo-300" : "bg-gray-50"}`}
-              >
-                <Text
-                  className={`${mappedFields.name === "Column 1" ? "text-indigo-700" : "text-gray-700"}`}
-                >
-                  Column 1 (Name)
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={() =>
-                  setMappedFields({ ...mappedFields, name: "Column 3" })
-                }
-                className={`p-2 rounded-md ${mappedFields.name === "Column 3" ? "bg-indigo-100 border border-indigo-300" : "bg-gray-50"}`}
-              >
-                <Text
-                  className={`${mappedFields.name === "Column 3" ? "text-indigo-700" : "text-gray-700"}`}
-                >
-                  Column 3 (Email)
-                </Text>
-              </TouchableOpacity>
+              {renderColumnOptions("name")}
             </View>
           </View>
 
           <View className="mb-4">
-            <Text className="font-medium mb-2">Phone Number Field</Text>
+            <Text className="font-medium mb-2">
+              Phone Number Field <Text className="text-red-500">*</Text>
+            </Text>
             <View className="border border-gray-200 rounded-lg p-3">
-              <TouchableOpacity
-                onPress={() =>
-                  setMappedFields({ ...mappedFields, phone: "Column 2" })
-                }
-                className={`p-2 rounded-md ${mappedFields.phone === "Column 2" ? "bg-indigo-100 border border-indigo-300" : "bg-gray-50"}`}
-              >
-                <Text
-                  className={`${mappedFields.phone === "Column 2" ? "text-indigo-700" : "text-gray-700"}`}
-                >
-                  Column 2 (Phone)
-                </Text>
-              </TouchableOpacity>
+              {renderColumnOptions("phone")}
+            </View>
+          </View>
+
+          <View className="mb-4">
+            <Text className="font-medium mb-2">Email Field (Optional)</Text>
+            <View className="border border-gray-200 rounded-lg p-3">
+              {renderColumnOptions("email")}
+            </View>
+          </View>
+
+          <View className="mb-4">
+            <Text className="font-medium mb-2">
+              Category/Group Field (Optional)
+            </Text>
+            <View className="border border-gray-200 rounded-lg p-3">
+              {renderColumnOptions("category")}
             </View>
           </View>
 
@@ -213,16 +486,7 @@ export default function ImportContactsScreen() {
               Back
             </Button>
             <Button
-              onPress={() => {
-                // Create contacts from mapped fields
-                const newContacts = previewData.map((row) => ({
-                  name: row[0],
-                  phone: row[1],
-                  valid: true,
-                }));
-                setContacts(newContacts);
-                setStep("validation");
-              }}
+              onPress={processContacts}
               className="bg-indigo-600"
               disabled={!mappedFields.name || !mappedFields.phone}
             >
@@ -276,33 +540,49 @@ export default function ImportContactsScreen() {
                     value={item.phone}
                     onChangeText={(text) => {
                       const updatedContacts = [...contacts];
+                      const cleanPhone = text.replace(/[^0-9+\-\s()]/g, "");
                       updatedContacts[index] = {
                         ...item,
-                        phone: text,
-                        valid: text.length >= 10,
+                        phone: cleanPhone,
+                        valid: cleanPhone.replace(/[^0-9]/g, "").length >= 10,
                       };
                       setContacts(updatedContacts);
                     }}
                     className="flex-1 p-1 border-b border-gray-300"
+                    keyboardType="phone-pad"
                   />
                 </View>
+                {item.email && (
+                  <View className="flex-row items-center mb-1">
+                    <Text className="text-gray-500 w-20">Email:</Text>
+                    <Text className="flex-1 p-1">{item.email}</Text>
+                  </View>
+                )}
+                {item.category && (
+                  <View className="flex-row items-center mb-1">
+                    <Text className="text-gray-500 w-20">Category:</Text>
+                    <Text className="flex-1 p-1">{item.category}</Text>
+                  </View>
+                )}
               </View>
             )}
             keyExtractor={(_, index) => index.toString()}
           />
 
           <View className="flex-row justify-end mt-4">
-            <Button
-              onPress={() => setStep("mapping")}
-              variant="outline"
-              className="mr-3"
-            >
-              Back
-            </Button>
+            {fileType !== "device" && (
+              <Button
+                onPress={() => setStep("mapping")}
+                variant="outline"
+                className="mr-3"
+              >
+                Back
+              </Button>
+            )}
             <Button
               onPress={() => setStep("complete")}
               className="bg-indigo-600"
-              disabled={contacts.some((c) => !c.valid)}
+              disabled={contacts.filter((c) => c.valid).length === 0}
             >
               Continue
             </Button>
@@ -321,7 +601,8 @@ export default function ImportContactsScreen() {
                 Import Complete
               </Text>
               <Text className="text-sm text-gray-500 text-center mt-2">
-                {contacts.length} contacts have been successfully imported
+                {contacts.filter((c) => c.valid).length} contacts are ready to
+                be saved
               </Text>
             </View>
 
@@ -336,12 +617,7 @@ export default function ImportContactsScreen() {
             </View>
 
             <Button
-              onPress={() => {
-                // Here you would save the contacts and group
-                // Then navigate back to contacts screen
-                console.log("Contacts saved:", contacts);
-                console.log("Group created:", groupName);
-              }}
+              onPress={() => saveContacts(true)}
               className="mb-3 bg-indigo-600"
               icon={<Users size={18} color="white" />}
               disabled={!groupName}
@@ -350,11 +626,7 @@ export default function ImportContactsScreen() {
             </Button>
 
             <Button
-              onPress={() => {
-                // Here you would save just the contacts
-                // Then navigate back to contacts screen
-                console.log("Contacts saved:", contacts);
-              }}
+              onPress={() => saveContacts(false)}
               variant="outline"
               className="border-indigo-600"
             >
