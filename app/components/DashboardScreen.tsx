@@ -1,5 +1,12 @@
 import React, { useState, useEffect } from "react";
-import { View, Text, ScrollView, TouchableOpacity, Alert } from "react-native";
+import {
+  View,
+  Text,
+  ScrollView,
+  TouchableOpacity,
+  Alert,
+  RefreshControl,
+} from "react-native";
 import { useRouter } from "expo-router";
 import {
   MessageSquare,
@@ -22,6 +29,7 @@ export default function DashboardScreen() {
   });
   const [recentActivity, setRecentActivity] = useState([]);
   const [upcomingCampaigns, setUpcomingCampaigns] = useState([]);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     // Initialize file storage directories
@@ -30,6 +38,12 @@ export default function DashboardScreen() {
     // Load data
     loadDashboardData();
   }, []);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await loadDashboardData();
+    setRefreshing(false);
+  };
 
   const loadDashboardData = async () => {
     try {
@@ -193,7 +207,12 @@ export default function DashboardScreen() {
   };
 
   return (
-    <ScrollView className="flex-1 bg-white p-4">
+    <ScrollView
+      className="flex-1 bg-white p-4"
+      refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+      }
+    >
       <View className="mb-6">
         <Text className="text-2xl font-bold text-gray-800">Dashboard</Text>
         <Text className="text-gray-500">Welcome to SMS Campaign Manager</Text>

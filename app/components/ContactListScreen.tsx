@@ -1,11 +1,14 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
   FlatList,
   TextInput,
   TouchableOpacity,
+  Alert,
+  RefreshControl,
 } from "react-native";
+import { useRouter } from "expo-router";
 import {
   Search,
   Plus,
@@ -13,8 +16,11 @@ import {
   UserPlus,
   Filter,
   MoreVertical,
+  Trash2,
+  Edit,
 } from "lucide-react-native";
 import { Button } from "./ui/Button";
+import * as FileStorage from "../utils/fileStorage";
 
 type Contact = {
   id: string;
@@ -31,50 +37,87 @@ type Group = {
 };
 
 export default function ContactListScreen() {
+  const router = useRouter();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedFilter, setSelectedFilter] = useState("all");
   const [selectedContacts, setSelectedContacts] = useState<string[]>([]);
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
 
-  // Dummy data for contacts
-  const contacts: Contact[] = [
-    {
-      id: "1",
-      name: "John Doe",
-      phone: "+1234567890",
-      groups: ["Customers", "VIP"],
-      lastContacted: "2023-10-15",
-    },
-    {
-      id: "2",
-      name: "Jane Smith",
-      phone: "+1987654321",
-      groups: ["Leads"],
-      lastContacted: "2023-10-10",
-    },
-    {
-      id: "3",
-      name: "Bob Johnson",
-      phone: "+1122334455",
-      groups: ["Customers"],
-      lastContacted: "2023-09-28",
-    },
-    {
-      id: "4",
-      name: "Alice Brown",
-      phone: "+15556667777",
-      groups: ["Leads", "New"],
-      lastContacted: "2023-10-18",
-    },
-  ];
+  useEffect(() => {
+    loadContacts();
+  }, []);
 
-  // Dummy data for groups
-  const groups: Group[] = [
-    { id: "1", name: "All Contacts", count: contacts.length },
-    { id: "2", name: "Customers", count: 2 },
-    { id: "3", name: "Leads", count: 2 },
-    { id: "4", name: "VIP", count: 1 },
-    { id: "5", name: "New", count: 1 },
-  ];
+  const loadContacts = async () => {
+    try {
+      // Get all contact groups
+      const groupNames = await FileStorage.getContactGroups();
+
+      // Load all contacts from all groups
+      let allContacts: Contact[] = [];
+      const groupsWithCount: Group[] = [];
+
+      // Add "All Contacts" group
+      groupsWithCount.push({ id: "all", name: "All Contacts", count: 0 });
+
+      // Load contacts from each group
+      for (const groupName of groupNames) {
+        const groupContacts = await FileStorage.getContactsFromGroup(groupName);
+
+        // Format contacts and add group information
+        const formattedContacts = groupContacts.map((contact) => ({
+          id: contact.id || contact.phone,
+          name: contact.name,
+          phone: contact.phone,
+          groups: [groupName.replace(".json", "")],
+          lastContacted:
+            contact.lastContacted || new Date().toISOString().split("T")[0],
+        }));
+
+        // Add to all contacts
+        allContacts = [...allContacts, ...formattedContacts];
+
+        // Add group with count
+        groupsWithCount.push({
+          id: groupName,
+          name: groupName.replace(".json", "").replace(/_/g, " "),
+          count: groupContacts.length,
+        });
+      }
+
+      // Update "All Contacts" count
+      groupsWithCount[0].count = allContacts.length;
+
+      // Deduplicate contacts by phone number
+      const uniqueContacts = allContacts.reduce((acc, current) => {
+        const x = acc.find((item) => item.phone === current.phone);
+        if (!x) {
+          return acc.concat([current]);
+        } else {
+          // Merge groups for duplicate contacts
+          x.groups = [...new Set([...x.groups, ...current.groups])];
+          return acc;
+        }
+      }, [] as Contact[]);
+
+      setContacts(uniqueContacts);
+      setGroups(groupsWithCount);
+    } catch (error) {
+      console.error("Error loading contacts:", error);
+      Alert.alert("Error", "Failed to load contacts. Please try again.");
+
+      // Fallback to empty arrays if there's an error
+      setContacts([]);
+      setGroups([{ id: "all", name: "All Contacts", count: 0 }]);
+    }
+  };
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await loadContacts();
+    setRefreshing(false);
+  };
 
   const filteredContacts = contacts.filter((contact) => {
     const matchesSearch =
@@ -82,8 +125,173 @@ export default function ContactListScreen() {
       contact.phone.includes(searchQuery);
 
     if (selectedFilter === "all") return matchesSearch;
-    return matchesSearch && contact.groups.includes(selectedFilter);
+    return (
+      matchesSearch &&
+      contact.groups.includes(selectedFilter.replace(".json", ""))
+    );
   });
+
+  const handleAddContact = () => {
+    router.push("/components/ContactManagement");
+  };
+
+  const handleImportContacts = () => {
+    router.push("/components/ImportContactsScreen");
+  };
+
+  const handleDeleteContacts = async () => {
+    if (selectedContacts.length === 0) return;
+
+    Alert.alert(
+      "Delete Contacts",
+      `Are you sure you want to delete ${selectedContacts.length} contact(s)?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              // Get all groups
+              const groupNames = await FileStorage.getContactGroups();
+
+              // For each group, remove the selected contacts
+              for (const groupName of groupNames) {
+                const groupContacts =
+                  await FileStorage.getContactsFromGroup(groupName);
+                const updatedContacts = groupContacts.filter(
+                  (contact) =>
+                    !selectedContacts.includes(contact.id || contact.phone),
+                );
+
+                // Save the updated contacts back to the group
+                await FileStorage.saveContactsToGroup(
+                  updatedContacts,
+                  groupName,
+                );
+              }
+
+              // Clear selection and reload contacts
+              setSelectedContacts([]);
+              await loadContacts();
+
+              Alert.alert("Success", "Contacts deleted successfully");
+            } catch (error) {
+              console.error("Error deleting contacts:", error);
+              Alert.alert(
+                "Error",
+                "Failed to delete contacts. Please try again.",
+              );
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const handleAddToGroup = async () => {
+    if (selectedContacts.length === 0) return;
+
+    try {
+      // Get all groups
+      const groupNames = await FileStorage.getContactGroups();
+      const formattedGroups = groupNames.map((name) => ({
+        label: name.replace(".json", "").replace(/_/g, " "),
+        value: name,
+      }));
+
+      // Show group selection dialog
+      Alert.alert("Add to Group", "Select a group or create a new one", [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "New Group",
+          onPress: () => {
+            // Prompt for new group name
+            Alert.prompt(
+              "New Group",
+              "Enter a name for the new group",
+              async (groupName) => {
+                if (!groupName) return;
+
+                const fileName = `${groupName.replace(/ /g, "_")}.json`;
+
+                // Get selected contacts
+                const selectedContactObjects = contacts.filter((contact) =>
+                  selectedContacts.includes(contact.id),
+                );
+
+                // Save to new group
+                await FileStorage.saveContactsToGroup(
+                  selectedContactObjects,
+                  fileName,
+                );
+
+                // Clear selection and reload
+                setSelectedContacts([]);
+                await loadContacts();
+
+                Alert.alert(
+                  "Success",
+                  `${selectedContactObjects.length} contacts added to ${groupName}`,
+                );
+              },
+            );
+          },
+        },
+        ...formattedGroups.map((group) => ({
+          text: group.label,
+          onPress: async () => {
+            // Get existing contacts in the group
+            const groupContacts = await FileStorage.getContactsFromGroup(
+              group.value,
+            );
+
+            // Get selected contacts
+            const selectedContactObjects = contacts.filter((contact) =>
+              selectedContacts.includes(contact.id),
+            );
+
+            // Merge contacts (avoid duplicates by phone)
+            const mergedContacts = [...groupContacts];
+
+            for (const contact of selectedContactObjects) {
+              const existingIndex = mergedContacts.findIndex(
+                (c) => c.phone === contact.phone,
+              );
+              if (existingIndex === -1) {
+                mergedContacts.push(contact);
+              }
+            }
+
+            // Save back to group
+            await FileStorage.saveContactsToGroup(mergedContacts, group.value);
+
+            // Clear selection and reload
+            setSelectedContacts([]);
+            await loadContacts();
+
+            Alert.alert("Success", `Contacts added to ${group.label}`);
+          },
+        })),
+      ]);
+    } catch (error) {
+      console.error("Error adding to group:", error);
+      Alert.alert(
+        "Error",
+        "Failed to add contacts to group. Please try again.",
+      );
+    }
+  };
+
+  const handleCreateCampaign = () => {
+    if (selectedContacts.length === 0) return;
+
+    // Navigate to campaign builder with selected contacts
+    router.push({
+      pathname: "/components/CampaignBuilder",
+      params: { selectedContacts: JSON.stringify(selectedContacts) },
+    });
+  };
 
   const toggleContactSelection = (id: string) => {
     if (selectedContacts.includes(id)) {
@@ -141,6 +349,23 @@ export default function ContactListScreen() {
       <FlatList
         data={filteredContacts}
         keyExtractor={(item) => item.id}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
+        ListEmptyComponent={
+          <View className="py-8 items-center justify-center">
+            <Text className="text-gray-500 text-center mb-4">
+              No contacts found
+            </Text>
+            <Button
+              onPress={handleImportContacts}
+              className="bg-indigo-600"
+              icon={<Users size={18} color="white" />}
+            >
+              Import Contacts
+            </Button>
+          </View>
+        }
         renderItem={({ item }) => (
           <TouchableOpacity
             onPress={() => toggleContactSelection(item.id)}
@@ -186,7 +411,7 @@ export default function ContactListScreen() {
       {/* Action buttons */}
       <View className="flex-row justify-between mt-4">
         <Button
-          onPress={() => {}}
+          onPress={handleAddContact}
           variant="outline"
           className="flex-1 mr-2"
           icon={<UserPlus size={18} color="#6366F1" />}
@@ -194,7 +419,7 @@ export default function ContactListScreen() {
           Add Contact
         </Button>
         <Button
-          onPress={() => {}}
+          onPress={handleImportContacts}
           className="flex-1 ml-2 bg-indigo-600"
           icon={<Users size={18} color="white" />}
         >
@@ -209,13 +434,22 @@ export default function ContactListScreen() {
             {selectedContacts.length} selected
           </Text>
           <View className="flex-row">
-            <Button onPress={() => {}} variant="ghost" className="mr-2">
+            <Button
+              onPress={handleDeleteContacts}
+              variant="ghost"
+              className="mr-2"
+              icon={<Trash2 size={18} color="white" />}
+            >
+              Delete
+            </Button>
+            <Button onPress={handleAddToGroup} variant="ghost" className="mr-2">
               Add to Group
             </Button>
             <Button
-              onPress={() => {}}
+              onPress={handleCreateCampaign}
               variant="ghost"
               className="bg-indigo-700"
+              icon={<MessageSquare size={18} color="white" />}
             >
               New Campaign
             </Button>
