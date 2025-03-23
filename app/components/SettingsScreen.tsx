@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -6,6 +6,8 @@ import {
   ScrollView,
   TouchableOpacity,
   TextInput,
+  ActivityIndicator,
+  Alert,
 } from "react-native";
 import {
   Moon,
@@ -16,15 +18,134 @@ import {
   User,
   ChevronRight,
   LogOut,
+  RefreshCw,
 } from "lucide-react-native";
-import { Button } from "./ui/Button";
+import { getAppSettings, updateAppSettings } from "../utils/settingsStorage";
 
 export default function SettingsScreen() {
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
   const [notifications, setNotifications] = useState(true);
   const [deliveryReports, setDeliveryReports] = useState(true);
   const [autoRetry, setAutoRetry] = useState(true);
   const [smsLimit, setSmsLimit] = useState("100");
+  const [lastUpdated, setLastUpdated] = useState("");
+
+  // Load settings from storage
+  const loadSettings = async () => {
+    try {
+      setLoading(true);
+      const settings = await getAppSettings();
+
+      setDarkMode(settings.darkMode);
+      setNotifications(settings.notifications);
+      setDeliveryReports(settings.deliveryReports);
+      setAutoRetry(settings.autoRetry);
+      setSmsLimit(settings.smsLimit);
+
+      // Format the last updated date
+      if (settings.lastUpdated) {
+        const date = new Date(settings.lastUpdated);
+        setLastUpdated(date.toLocaleString());
+      }
+    } catch (error) {
+      console.error("Error loading settings:", error);
+      Alert.alert("Error", "Failed to load settings");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Save a specific setting
+  const saveSetting = async (key: string, value: any) => {
+    try {
+      setSaving(true);
+      const updateData: any = {};
+      updateData[key] = value;
+
+      await updateAppSettings(updateData);
+
+      // Update last updated time
+      const date = new Date();
+      setLastUpdated(date.toLocaleString());
+    } catch (error) {
+      console.error(`Error saving setting ${key}:`, error);
+      Alert.alert("Error", `Failed to save ${key} setting`);
+
+      // Revert the UI state if save failed
+      switch (key) {
+        case "darkMode":
+          setDarkMode(!value);
+          break;
+        case "notifications":
+          setNotifications(!value);
+          break;
+        case "deliveryReports":
+          setDeliveryReports(!value);
+          break;
+        case "autoRetry":
+          setAutoRetry(!value);
+          break;
+        case "smsLimit":
+          loadSettings(); // Reload all settings
+          break;
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Handle SMS limit change
+  const handleSmsLimitChange = (value: string) => {
+    // Only allow numbers
+    const numericValue = value.replace(/[^0-9]/g, "");
+    setSmsLimit(numericValue);
+  };
+
+  // Save SMS limit when input is complete
+  const handleSmsLimitBlur = () => {
+    // Ensure a minimum value of 1
+    const numericValue = parseInt(smsLimit) || 1;
+    const limitValue = numericValue.toString();
+    setSmsLimit(limitValue);
+    saveSetting("smsLimit", limitValue);
+  };
+
+  // Handle logout
+  const handleLogout = () => {
+    Alert.alert(
+      "Log Out",
+      "Are you sure you want to log out?",
+      [
+        {
+          text: "Cancel",
+          style: "cancel",
+        },
+        {
+          text: "Log Out",
+          style: "destructive",
+          onPress: () => {
+            // Implement logout logic here
+            Alert.alert("Logged Out", "You have been logged out successfully");
+          },
+        },
+      ],
+      { cancelable: true },
+    );
+  };
+
+  // Handle profile navigation
+  const handleProfilePress = () => {
+    Alert.alert("Profile", "This would navigate to the profile screen", [
+      { text: "OK" },
+    ]);
+  };
+
+  // Load settings on mount
+  useEffect(() => {
+    loadSettings();
+  }, []);
 
   const settingsSections = [
     {
@@ -37,7 +158,11 @@ export default function SettingsScreen() {
           type: "switch",
           icon: <Moon size={20} color="#6366F1" />,
           value: darkMode,
-          onToggle: () => setDarkMode(!darkMode),
+          onToggle: () => {
+            const newValue = !darkMode;
+            setDarkMode(newValue);
+            saveSetting("darkMode", newValue);
+          },
         },
         {
           id: "notifications",
@@ -46,7 +171,11 @@ export default function SettingsScreen() {
           type: "switch",
           icon: <Bell size={20} color="#6366F1" />,
           value: notifications,
-          onToggle: () => setNotifications(!notifications),
+          onToggle: () => {
+            const newValue = !notifications;
+            setNotifications(newValue);
+            saveSetting("notifications", newValue);
+          },
         },
       ],
     },
@@ -60,7 +189,11 @@ export default function SettingsScreen() {
           type: "switch",
           icon: <MessageSquare size={20} color="#6366F1" />,
           value: deliveryReports,
-          onToggle: () => setDeliveryReports(!deliveryReports),
+          onToggle: () => {
+            const newValue = !deliveryReports;
+            setDeliveryReports(newValue);
+            saveSetting("deliveryReports", newValue);
+          },
         },
         {
           id: "autoRetry",
@@ -69,7 +202,11 @@ export default function SettingsScreen() {
           type: "switch",
           icon: <Clock size={20} color="#6366F1" />,
           value: autoRetry,
-          onToggle: () => setAutoRetry(!autoRetry),
+          onToggle: () => {
+            const newValue = !autoRetry;
+            setAutoRetry(newValue);
+            saveSetting("autoRetry", newValue);
+          },
         },
         {
           id: "smsLimit",
@@ -78,7 +215,8 @@ export default function SettingsScreen() {
           type: "input",
           icon: <Shield size={20} color="#6366F1" />,
           value: smsLimit,
-          onChangeText: setSmsLimit,
+          onChangeText: handleSmsLimitChange,
+          onBlur: handleSmsLimitBlur,
         },
       ],
     },
@@ -91,7 +229,7 @@ export default function SettingsScreen() {
           description: "Update your profile details",
           type: "link",
           icon: <User size={20} color="#6366F1" />,
-          onPress: () => {},
+          onPress: handleProfilePress,
         },
         {
           id: "logout",
@@ -100,15 +238,43 @@ export default function SettingsScreen() {
           type: "button",
           icon: <LogOut size={20} color="#EF4444" />,
           buttonColor: "text-red-500",
-          onPress: () => {},
+          onPress: handleLogout,
         },
       ],
     },
   ];
 
+  if (loading) {
+    return (
+      <View className="flex-1 bg-white justify-center items-center">
+        <ActivityIndicator size="large" color="#6366F1" />
+        <Text className="mt-4 text-gray-600">Loading settings...</Text>
+      </View>
+    );
+  }
+
   return (
     <ScrollView className="flex-1 bg-white p-4">
-      <Text className="text-xl font-bold text-gray-800 mb-6">Settings</Text>
+      <View className="flex-row justify-between items-center mb-6">
+        <Text className="text-xl font-bold text-gray-800">Settings</Text>
+        <TouchableOpacity
+          onPress={loadSettings}
+          className="bg-gray-100 p-2 rounded-lg"
+          disabled={loading || saving}
+        >
+          <RefreshCw
+            size={20}
+            color={loading || saving ? "#A5B4FC" : "#6366F1"}
+          />
+        </TouchableOpacity>
+      </View>
+
+      {saving && (
+        <View className="items-center mb-4">
+          <ActivityIndicator size="small" color="#6366F1" />
+          <Text className="text-indigo-600 mt-1">Saving changes...</Text>
+        </View>
+      )}
 
       {settingsSections.map((section, sectionIndex) => (
         <View key={section.title} className="mb-6">
@@ -140,6 +306,7 @@ export default function SettingsScreen() {
                       onValueChange={setting.onToggle}
                       trackColor={{ false: "#D1D5DB", true: "#A5B4FC" }}
                       thumbColor={setting.value ? "#6366F1" : "#F3F4F6"}
+                      disabled={saving}
                     />
                   )}
 
@@ -147,13 +314,18 @@ export default function SettingsScreen() {
                     <TextInput
                       value={setting.value as string}
                       onChangeText={setting.onChangeText}
+                      onBlur={setting.onBlur}
                       keyboardType="number-pad"
                       className="bg-white border border-gray-300 rounded-lg px-3 py-1 w-16 text-center"
+                      editable={!saving}
                     />
                   )}
 
                   {setting.type === "link" && (
-                    <TouchableOpacity onPress={setting.onPress}>
+                    <TouchableOpacity
+                      onPress={setting.onPress}
+                      disabled={saving}
+                    >
                       <ChevronRight size={20} color="#6B7280" />
                     </TouchableOpacity>
                   )}
@@ -162,6 +334,7 @@ export default function SettingsScreen() {
                     <TouchableOpacity
                       onPress={setting.onPress}
                       className="bg-red-50 px-3 py-1 rounded-lg"
+                      disabled={saving}
                     >
                       <Text className="text-red-500 font-medium">Log Out</Text>
                     </TouchableOpacity>
@@ -185,6 +358,11 @@ export default function SettingsScreen() {
             enables users to create, send, and track bulk SMS campaigns directly
             using the device's native SMS functionality.
           </Text>
+          {lastUpdated && (
+            <Text className="text-xs text-gray-400 mt-3">
+              Settings last updated: {lastUpdated}
+            </Text>
+          )}
         </View>
       </View>
 
