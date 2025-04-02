@@ -125,9 +125,50 @@ export default function SettingsScreen() {
         {
           text: "Log Out",
           style: "destructive",
-          onPress: () => {
-            // Implement logout logic here
-            Alert.alert("Logged Out", "You have been logged out successfully");
+          onPress: async () => {
+            try {
+              setSaving(true);
+
+              // Reset settings to default
+              await updateAppSettings({
+                darkMode: false,
+                notifications: true,
+                deliveryReports: true,
+                autoRetry: true,
+                smsLimit: "100",
+              });
+
+              // Clear any cached data
+              try {
+                // In a real app, we would clear auth tokens, cached data, etc.
+                // For this demo, we'll just reset the UI state
+                setDarkMode(false);
+                setNotifications(true);
+                setDeliveryReports(true);
+                setAutoRetry(true);
+                setSmsLimit("100");
+
+                // Update last updated time
+                const date = new Date();
+                setLastUpdated(date.toLocaleString());
+              } catch (clearError) {
+                console.error("Error clearing cached data:", clearError);
+                // Continue with logout even if clearing cache fails
+              }
+
+              Alert.alert(
+                "Logged Out",
+                "You have been logged out successfully",
+              );
+            } catch (error) {
+              console.error("Error during logout:", error);
+              Alert.alert(
+                "Error",
+                "Failed to log out completely. Please try again.",
+              );
+            } finally {
+              setSaving(false);
+            }
           },
         },
       ],
@@ -336,7 +377,13 @@ export default function SettingsScreen() {
                       className="bg-red-50 px-3 py-1 rounded-lg"
                       disabled={saving}
                     >
-                      <Text className="text-red-500 font-medium">Log Out</Text>
+                      {saving && setting.id === "logout" ? (
+                        <ActivityIndicator size="small" color="#EF4444" />
+                      ) : (
+                        <Text className="text-red-500 font-medium">
+                          Log Out
+                        </Text>
+                      )}
                     </TouchableOpacity>
                   )}
                 </View>

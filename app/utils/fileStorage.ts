@@ -123,6 +123,22 @@ export const saveContacts = async (contacts: any[], groupName: string) => {
   }
 };
 
+// Save contacts to a specific group
+export const saveContactsToGroup = async (
+  contacts: any[],
+  groupFileName: string,
+) => {
+  try {
+    await ensureDirectoriesExist();
+    const filePath = CONTACTS_DIRECTORY + groupFileName;
+    await FileSystem.writeAsStringAsync(filePath, JSON.stringify(contacts));
+    return filePath;
+  } catch (error) {
+    console.error("Error saving contacts to group:", error);
+    throw error;
+  }
+};
+
 // Get all contact groups
 export const getContactGroups = async () => {
   try {

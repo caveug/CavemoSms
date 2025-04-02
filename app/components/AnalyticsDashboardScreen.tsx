@@ -101,12 +101,33 @@ export default function AnalyticsDashboardScreen() {
       const deliveryRate = totalSent > 0 ? (delivered / totalSent) * 100 : 0;
       const responseRate = delivered > 0 ? (responses / delivered) * 100 : 0;
 
-      // Generate contact groups data
+      // Generate contact groups data based on campaign performance
+      // In a real implementation, this would be calculated from actual data
       const groups = [
-        { id: "1", name: "Customers", count: 450, rate: 32.5 },
-        { id: "2", name: "Leads", count: 320, rate: 24.8 },
-        { id: "3", name: "VIP", count: 85, rate: 41.2 },
-        { id: "4", name: "New", count: 120, rate: 18.3 },
+        {
+          id: "1",
+          name: "Customers",
+          count: Math.floor(totalSent * 0.4),
+          rate: 32.5,
+        },
+        {
+          id: "2",
+          name: "Leads",
+          count: Math.floor(totalSent * 0.3),
+          rate: 24.8,
+        },
+        {
+          id: "3",
+          name: "VIP",
+          count: Math.floor(totalSent * 0.1),
+          rate: 41.2,
+        },
+        {
+          id: "4",
+          name: "New",
+          count: Math.floor(totalSent * 0.2),
+          rate: 18.3,
+        },
       ];
 
       // Update state
@@ -169,21 +190,50 @@ export default function AnalyticsDashboardScreen() {
   // Handle export
   const handleExport = async () => {
     try {
+      // Show loading indicator
+      setRefreshing(true);
+
       const analyticsData = await exportAnalyticsData();
       if (!analyticsData) {
         Alert.alert("Error", "No analytics data to export");
+        setRefreshing(false);
+        return;
+      }
+
+      // Check if there are campaigns to export
+      if (analyticsData.campaigns.length === 0) {
+        Alert.alert(
+          "No Data",
+          "There are no campaigns to export for the selected time period.",
+        );
+        setRefreshing(false);
         return;
       }
 
       // Convert to CSV
-      const campaignData = analyticsData.campaigns.map((campaign) => ({
-        Campaign: campaign.name,
-        Sent: campaign.sent,
-        Delivered: campaign.delivered,
-        Failed: campaign.failed,
-        Responses: campaign.responses,
-        Date: campaign.date,
-      }));
+      const campaignData = analyticsData.campaigns.map((campaign) => {
+        // Avoid division by zero
+        const deliveryRate =
+          campaign.sent > 0
+            ? ((campaign.delivered / campaign.sent) * 100).toFixed(1) + "%"
+            : "0%";
+
+        const responseRate =
+          campaign.delivered > 0
+            ? ((campaign.responses / campaign.delivered) * 100).toFixed(1) + "%"
+            : "0%";
+
+        return {
+          Campaign: campaign.name,
+          Sent: campaign.sent,
+          Delivered: campaign.delivered,
+          Failed: campaign.failed,
+          Responses: campaign.responses,
+          Date: campaign.date,
+          DeliveryRate: deliveryRate,
+          ResponseRate: responseRate,
+        };
+      });
 
       const csv = Papa.unparse(campaignData);
       const fileName = `analytics_export_${Date.now()}.csv`;
@@ -193,12 +243,16 @@ export default function AnalyticsDashboardScreen() {
 
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(filePath);
+        Alert.alert("Success", "Analytics data exported successfully");
       } else {
         Alert.alert("Error", "Sharing is not available on this device");
       }
     } catch (error) {
       console.error("Error exporting analytics:", error);
       Alert.alert("Error", "Failed to export analytics data");
+    } finally {
+      // Always hide loading indicator
+      setRefreshing(false);
     }
   };
 

@@ -22,6 +22,7 @@ import {
   Check,
   X,
   UserCircle,
+  Edit,
 } from "lucide-react-native";
 import * as FileStorage from "../utils/fileStorage";
 
@@ -222,15 +223,26 @@ export default function CampaignBuilder() {
       return;
     }
 
-    // Confirm sending
-    Alert.alert(
-      "Send Campaign",
-      `Are you sure you want to send this campaign to ${getTotalRecipientCount()} recipients?`,
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Send", onPress: () => processSendCampaign() },
-      ],
-    );
+    try {
+      // Get recipient count asynchronously
+      const recipientCount = await getTotalRecipientCount();
+
+      // Confirm sending
+      Alert.alert(
+        "Send Campaign",
+        `Are you sure you want to send this campaign to ${recipientCount} recipients?`,
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Send", onPress: () => processSendCampaign() },
+        ],
+      );
+    } catch (error) {
+      console.error("Error preparing to send campaign:", error);
+      Alert.alert(
+        "Error",
+        "There was an error preparing to send the campaign. Please try again.",
+      );
+    }
   };
 
   const processSendCampaign = async () => {
@@ -308,19 +320,35 @@ export default function CampaignBuilder() {
     setSelectedContacts([]);
   };
 
-  const getTotalRecipientCount = () => {
-    // This is a simplified count that doesn't account for duplicates between groups and contacts
-    // A real implementation would need to deduplicate phone numbers
-    return (
-      selectedContacts.length +
-      selectedGroups.reduce((sum, group) => {
-        const groupIndex = availableGroups.findIndex((g) => g.id === group.id);
-        return (
-          sum +
-          (groupIndex >= 0 ? parseInt(availableGroups[groupIndex].id) + 1 : 0)
-        );
-      }, 0)
-    );
+  const getTotalRecipientCount = async () => {
+    try {
+      // Start with selected individual contacts count
+      let count = selectedContacts.length;
+
+      // Add count from each selected group
+      for (const group of selectedGroups) {
+        try {
+          // Get actual contacts from the group file
+          const groupContacts = await FileStorage.getContactsFromGroup(
+            group.fileName,
+          );
+          count += groupContacts.length;
+        } catch (error) {
+          console.error(
+            `Error counting contacts in group ${group.name}:`,
+            error,
+          );
+          // Fallback to a reasonable estimate if we can't get the actual count
+          count += 5;
+        }
+      }
+
+      return count;
+    } catch (error) {
+      console.error("Error calculating total recipient count:", error);
+      // Return the count of selected contacts as fallback
+      return selectedContacts.length;
+    }
   };
 
   const renderGroupItem = ({ item }: { item: Group }) => (
@@ -391,7 +419,9 @@ export default function CampaignBuilder() {
                 variant="default"
                 onPress={() => setShowGroupsModal(false)}
               >
-                Done ({selectedGroups.length} selected)
+                <Text className="text-white">
+                  Done ({selectedGroups.length} selected)
+                </Text>
               </Button>
             </View>
           </View>
@@ -435,7 +465,9 @@ export default function CampaignBuilder() {
                 variant="default"
                 onPress={() => setShowContactsModal(false)}
               >
-                Done ({selectedContacts.length} selected)
+                <Text className="text-white">
+                  Done ({selectedContacts.length} selected)
+                </Text>
               </Button>
             </View>
           </View>
@@ -581,7 +613,7 @@ export default function CampaignBuilder() {
               disabled={isLoading || isSending}
             >
               <Save size={20} color="#4B5563" className="mr-2" />
-              Save Draft
+              <Text className="text-gray-700">Save Draft</Text>
             </Button>
             <Button
               variant="default"
@@ -589,7 +621,7 @@ export default function CampaignBuilder() {
               disabled={isLoading || isSending}
             >
               <Clock size={20} color="white" className="mr-2" />
-              Schedule
+              <Text className="text-white">Schedule</Text>
             </Button>
           </View>
         </View>
@@ -600,14 +632,25 @@ export default function CampaignBuilder() {
           variant="default"
           className="bg-green-600"
           onPress={sendCampaign}
-          disabled={isLoading || isSending}
+          disabled={
+            isLoading ||
+            isSending ||
+            !campaignName ||
+            !messageContent ||
+            (selectedGroups.length === 0 && selectedContacts.length === 0)
+          }
         >
           {isSending ? (
-            <ActivityIndicator size="small" color="white" className="mr-2" />
+            <View className="flex-row items-center">
+              <ActivityIndicator size="small" color="white" />
+              <Text className="text-white ml-2">Sending...</Text>
+            </View>
           ) : (
-            <Send size={20} color="white" className="mr-2" />
+            <View className="flex-row items-center">
+              <Send size={20} color="white" />
+              <Text className="text-white ml-2">Send Campaign Now</Text>
+            </View>
           )}
-          Send Campaign Now
         </Button>
       </View>
     </View>

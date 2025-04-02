@@ -18,6 +18,7 @@ import {
   AlertCircle,
   Trash2,
   Copy,
+  Edit,
 } from "lucide-react-native";
 import { Button } from "./ui/Button";
 import * as FileStorage from "../utils/fileStorage";
@@ -322,7 +323,7 @@ export default function CampaignListScreen() {
               className="bg-indigo-600"
               icon={<MessageSquare size={18} color="white" />}
             >
-              Create Campaign
+              <Text className="text-white">Create Campaign</Text>
             </Button>
           </View>
         }
@@ -424,7 +425,7 @@ export default function CampaignListScreen() {
               className="bg-indigo-700"
               icon={<Trash2 size={18} color="white" />}
             >
-              Delete
+              <Text className="text-white">Delete</Text>
             </Button>
           </View>
         </View>
