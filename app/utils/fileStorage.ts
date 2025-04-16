@@ -79,10 +79,23 @@ export const parseCSVFile = async (uri: string) => {
     return new Promise((resolve, reject) => {
       Papa.parse(fileContent, {
         header: true,
+        skipEmptyLines: true,
+        transformHeader: (header) => {
+          // Trim whitespace and ensure headers are not empty
+          return (
+            header.trim() ||
+            `Column_${Math.random().toString(36).substring(2, 7)}`
+          );
+        },
         complete: (results) => {
+          console.log("CSV parsing complete:", results);
+          if (results.errors && results.errors.length > 0) {
+            console.warn("CSV parsing had errors:", results.errors);
+          }
           resolve(results.data);
         },
         error: (error) => {
+          console.error("CSV parsing error:", error);
           reject(error);
         },
       });
@@ -100,9 +113,24 @@ export const parseExcelFile = async (uri: string) => {
       encoding: FileSystem.EncodingType.Base64,
     });
     const workbook = XLSX.read(fileContent, { type: "base64" });
+
+    if (!workbook || !workbook.SheetNames || workbook.SheetNames.length === 0) {
+      console.error("Invalid Excel file: No sheets found");
+      throw new Error("Invalid Excel file: No sheets found");
+    }
+
     const firstSheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[firstSheetName];
-    return XLSX.utils.sheet_to_json(worksheet);
+
+    if (!worksheet) {
+      console.error("Invalid Excel file: Empty worksheet");
+      throw new Error("Invalid Excel file: Empty worksheet");
+    }
+
+    // Convert sheet to JSON with headers
+    const jsonData = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
+    console.log("Excel parsing complete, rows:", jsonData.length);
+    return jsonData;
   } catch (error) {
     console.error("Error parsing Excel file:", error);
     throw error;
@@ -173,6 +201,35 @@ export const saveCampaign = async (campaign: any) => {
     return filePath;
   } catch (error) {
     console.error("Error saving campaign:", error);
+    throw error;
+  }
+};
+
+// Save multiple campaigns
+export const saveCampaigns = async (campaigns: any[]) => {
+  try {
+    await ensureDirectoriesExist();
+
+    // First, clear the campaigns directory
+    const files = await FileSystem.readDirectoryAsync(CAMPAIGNS_DIRECTORY);
+    for (const file of files) {
+      if (file.endsWith(".json")) {
+        await FileSystem.deleteAsync(CAMPAIGNS_DIRECTORY + file, {
+          idempotent: true,
+        });
+      }
+    }
+
+    // Then save each campaign as a separate file
+    for (const campaign of campaigns) {
+      const fileName = `campaign_${campaign.id}.json`;
+      const filePath = CAMPAIGNS_DIRECTORY + fileName;
+      await FileSystem.writeAsStringAsync(filePath, JSON.stringify(campaign));
+    }
+
+    return true;
+  } catch (error) {
+    console.error("Error saving campaigns:", error);
     throw error;
   }
 };

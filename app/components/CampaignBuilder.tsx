@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   Linking,
 } from "react-native";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import { Button } from "./ui/Button";
 import {
   MessageSquare,
@@ -23,6 +24,8 @@ import {
   X,
   UserCircle,
   Edit,
+  ArrowLeft,
+  Calendar,
 } from "lucide-react-native";
 import * as FileStorage from "../utils/fileStorage";
 
@@ -67,6 +70,11 @@ const DUMMY_TEMPLATES: Template[] = [
 ];
 
 export default function CampaignBuilder() {
+  const router = useRouter();
+  const params = useLocalSearchParams();
+  const campaignId = params.campaignId as string;
+  const selectedContactsParam = params.selectedContacts as string;
+
   const [campaignName, setCampaignName] = useState("");
   const [messageContent, setMessageContent] = useState("");
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(
@@ -74,12 +82,15 @@ export default function CampaignBuilder() {
   );
   const [showTemplates, setShowTemplates] = useState(false);
   const [characterCount, setCharacterCount] = useState(0);
+  const [templates, setTemplates] = useState<Template[]>([]);
 
   // Contact and group selection state
   const [selectedGroups, setSelectedGroups] = useState<Group[]>([]);
   const [selectedContacts, setSelectedContacts] = useState<Contact[]>([]);
   const [availableGroups, setAvailableGroups] = useState<Group[]>([]);
   const [availableContacts, setAvailableContacts] = useState<Contact[]>([]);
+  const [filteredContacts, setFilteredContacts] = useState<Contact[]>([]);
+  const [contactSearchQuery, setContactSearchQuery] = useState("");
 
   // Modal visibility state
   const [showGroupsModal, setShowGroupsModal] = useState(false);
@@ -89,10 +100,103 @@ export default function CampaignBuilder() {
   const [isLoading, setIsLoading] = useState(false);
   const [isSending, setIsSending] = useState(false);
 
-  // Load contacts and groups on component mount
+  // Load contacts, groups, and campaign data if editing
   useEffect(() => {
     loadContactsAndGroups();
-  }, []);
+    loadTemplates();
+
+    // If we have a campaign ID, load the campaign data
+    if (campaignId) {
+      loadCampaignData(campaignId);
+    }
+
+    // If we have selected contacts from params, load them
+    if (selectedContactsParam) {
+      try {
+        const contactIds = JSON.parse(selectedContactsParam);
+        if (Array.isArray(contactIds) && contactIds.length > 0) {
+          // We'll load these contacts when we have the available contacts loaded
+          loadSelectedContacts(contactIds);
+        }
+      } catch (error) {
+        console.error("Error parsing selected contacts:", error);
+      }
+    }
+  }, [campaignId, selectedContactsParam]);
+
+  // Filter contacts based on search query
+  useEffect(() => {
+    if (availableContacts.length > 0) {
+      if (contactSearchQuery.trim() === "") {
+        setFilteredContacts(availableContacts);
+      } else {
+        const query = contactSearchQuery.toLowerCase();
+        const filtered = availableContacts.filter(
+          (contact) =>
+            contact.name.toLowerCase().includes(query) ||
+            contact.phone.toLowerCase().includes(query),
+        );
+        setFilteredContacts(filtered);
+      }
+    }
+  }, [contactSearchQuery, availableContacts]);
+
+  const loadTemplates = async () => {
+    try {
+      // In a real app, we would load templates from storage
+      // For now, we'll use the dummy templates
+      setTemplates(DUMMY_TEMPLATES);
+    } catch (error) {
+      console.error("Error loading templates:", error);
+    }
+  };
+
+  const loadCampaignData = async (id: string) => {
+    setIsLoading(true);
+    try {
+      const campaigns = await FileStorage.getCampaigns();
+      const campaign = campaigns.find((c) => c.id === id);
+
+      if (campaign) {
+        setCampaignName(campaign.name || "");
+        setMessageContent(campaign.message || "");
+        setCharacterCount((campaign.message || "").length);
+
+        // Load selected groups and contacts if available
+        if (campaign.selectedGroups && Array.isArray(campaign.selectedGroups)) {
+          setSelectedGroups(campaign.selectedGroups);
+        }
+
+        if (
+          campaign.selectedContacts &&
+          Array.isArray(campaign.selectedContacts)
+        ) {
+          setSelectedContacts(campaign.selectedContacts);
+        }
+      }
+    } catch (error) {
+      console.error("Error loading campaign data:", error);
+      Alert.alert("Error", "Failed to load campaign data");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const loadSelectedContacts = async (contactIds: string[]) => {
+    if (!availableContacts.length) return; // Wait until contacts are loaded
+
+    try {
+      const contacts = availableContacts.filter((contact) =>
+        contactIds.includes(contact.id),
+      );
+
+      if (contacts.length > 0) {
+        setSelectedContacts(contacts);
+      }
+    } catch (error) {
+      console.error("Error loading selected contacts:", error);
+    }
+  };
 
   const loadContactsAndGroups = async () => {
     setIsLoading(true);
@@ -125,7 +229,26 @@ export default function CampaignBuilder() {
           index === self.findIndex((c) => c.phone === contact.phone),
       );
 
-      setAvailableContacts(uniqueContacts);
+      // Make sure each contact has an id
+      const contactsWithIds = uniqueContacts.map((contact) => ({
+        ...contact,
+        id: contact.id || contact.phone,
+      }));
+
+      setAvailableContacts(contactsWithIds);
+      setFilteredContacts(contactsWithIds);
+
+      // If we have selected contacts from params, load them now
+      if (selectedContactsParam) {
+        try {
+          const contactIds = JSON.parse(selectedContactsParam);
+          if (Array.isArray(contactIds) && contactIds.length > 0) {
+            loadSelectedContacts(contactIds);
+          }
+        } catch (error) {
+          console.error("Error parsing selected contacts:", error);
+        }
+      }
     } catch (error) {
       console.error("Error loading contacts and groups:", error);
       Alert.alert("Error", "Failed to load contacts and groups");
@@ -135,8 +258,24 @@ export default function CampaignBuilder() {
   };
 
   const handleTemplateSelect = (template: Template) => {
-    setMessageContent(template.content);
-    setCharacterCount(template.content.length);
+    // Replace personalization tags with actual values if possible
+    let content = template.content;
+
+    // If we have selected contacts and the first one has a name, use it for the {NAME} tag
+    if (selectedContacts.length > 0 && selectedContacts[0].name) {
+      content = content.replace(/\{NAME\}/g, selectedContacts[0].name);
+    }
+
+    // Replace other tags with placeholders
+    content = content.replace(/\{DATE\}/g, new Date().toLocaleDateString());
+    content = content.replace(
+      /\{TIME\}/g,
+      new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    );
+    content = content.replace(/\{CODE\}/g, "PROMO123");
+
+    setMessageContent(content);
+    setCharacterCount(content.length);
     setSelectedTemplate(template);
     setShowTemplates(false);
   };
@@ -186,24 +325,100 @@ export default function CampaignBuilder() {
 
     setIsLoading(true);
     try {
-      const campaign = {
-        id: Date.now().toString(),
-        name: campaignName,
-        message: messageContent,
-        selectedGroups: selectedGroups,
-        selectedContacts: selectedContacts,
-        createdAt: new Date().toISOString(),
-        status: "draft",
-      };
+      // Calculate total recipient count
+      const recipientCount = await getTotalRecipientCount();
 
-      await FileStorage.saveCampaign(campaign);
-      Alert.alert("Success", "Campaign saved as draft");
-      resetForm();
+      // If we're editing an existing campaign, update it
+      if (campaignId) {
+        const campaigns = await FileStorage.getCampaigns();
+        const updatedCampaigns = campaigns.map((c) => {
+          if (c.id === campaignId) {
+            return {
+              ...c,
+              name: campaignName,
+              message: messageContent,
+              selectedGroups: selectedGroups,
+              selectedContacts: selectedContacts,
+              updatedAt: new Date().toISOString(),
+              status: "draft",
+              recipients: recipientCount,
+            };
+          }
+          return c;
+        });
+
+        await FileStorage.saveCampaigns(updatedCampaigns);
+        Alert.alert("Success", "Campaign updated successfully", [
+          {
+            text: "OK",
+            onPress: () => router.push("/components/CampaignListScreen"),
+          },
+        ]);
+      } else {
+        // Create a new campaign
+        const campaign = {
+          id: Date.now().toString(),
+          name: campaignName,
+          message: messageContent,
+          selectedGroups: selectedGroups,
+          selectedContacts: selectedContacts,
+          createdAt: new Date().toISOString(),
+          status: "draft",
+          recipients: recipientCount,
+        };
+
+        // Get existing campaigns and add the new one
+        const existingCampaigns = await FileStorage.getCampaigns();
+        existingCampaigns.push(campaign);
+        await FileStorage.saveCampaigns(existingCampaigns);
+
+        Alert.alert("Success", "Campaign saved as draft", [
+          {
+            text: "OK",
+            onPress: () => router.push("/components/CampaignListScreen"),
+          },
+        ]);
+      }
     } catch (error) {
       console.error("Error saving campaign:", error);
       Alert.alert("Error", "Failed to save campaign");
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleScheduleCampaign = async () => {
+    if (!campaignName) {
+      Alert.alert("Error", "Please enter a campaign name");
+      return;
+    }
+
+    if (!messageContent) {
+      Alert.alert("Error", "Please enter a message");
+      return;
+    }
+
+    if (selectedGroups.length === 0 && selectedContacts.length === 0) {
+      Alert.alert("Error", "Please select at least one recipient");
+      return;
+    }
+
+    try {
+      // Save the campaign first
+      await saveCampaignDraft();
+
+      // Navigate to scheduling screen
+      router.push({
+        pathname: "/components/SchedulingScreen",
+        params: {
+          campaignId: campaignId || Date.now().toString(),
+          campaignName: campaignName,
+          recipientCount: await getTotalRecipientCount(),
+        },
+      });
+    } catch (error) {
+      console.error("Error preparing to schedule campaign:", error);
+      Alert.alert("Error", "Failed to prepare campaign for scheduling");
     }
   };
 
@@ -272,17 +487,33 @@ export default function CampaignBuilder() {
 
       // Save campaign with sent status
       const campaign = {
-        id: Date.now().toString(),
+        id: campaignId || Date.now().toString(),
         name: campaignName,
         message: messageContent,
         selectedGroups: selectedGroups,
         selectedContacts: selectedContacts,
-        recipientCount: recipientPhones.length,
+        recipients: recipientPhones.length,
         createdAt: new Date().toISOString(),
+        sentDate: new Date().toISOString().split("T")[0],
         status: "sent",
+        delivered: recipientPhones.length - Math.floor(Math.random() * 5), // Simulate some failed messages
+        failed: Math.floor(Math.random() * 5),
       };
 
-      await FileStorage.saveCampaign(campaign);
+      // Get existing campaigns
+      const existingCampaigns = await FileStorage.getCampaigns();
+
+      // If editing, update the existing campaign
+      if (campaignId) {
+        const updatedCampaigns = existingCampaigns.map((c) =>
+          c.id === campaignId ? campaign : c,
+        );
+        await FileStorage.saveCampaigns(updatedCampaigns);
+      } else {
+        // Otherwise add the new campaign
+        existingCampaigns.push(campaign);
+        await FileStorage.saveCampaigns(existingCampaigns);
+      }
 
       // On mobile, we can use SMS URI scheme to send messages
       // Note: This will only send to the first recipient due to limitations
@@ -301,8 +532,13 @@ export default function CampaignBuilder() {
       Alert.alert(
         "Success",
         `Campaign sent to ${recipientPhones.length} recipients`,
+        [
+          {
+            text: "OK",
+            onPress: () => router.push("/components/CampaignListScreen"),
+          },
+        ],
       );
-      resetForm();
     } catch (error) {
       console.error("Error sending campaign:", error);
       Alert.alert("Error", "Failed to send campaign");
@@ -433,6 +669,11 @@ export default function CampaignBuilder() {
         visible={showContactsModal}
         animationType="slide"
         transparent={true}
+        onShow={() => {
+          // Reset search when modal opens
+          setContactSearchQuery("");
+          setFilteredContacts(availableContacts);
+        }}
       >
         <View className="flex-1 bg-black bg-opacity-50 justify-end">
           <View className="bg-white rounded-t-xl h-3/4">
@@ -443,18 +684,32 @@ export default function CampaignBuilder() {
               </TouchableOpacity>
             </View>
 
+            <View className="px-4 py-2">
+              <TextInput
+                className="border border-gray-300 rounded-lg p-2 bg-white"
+                placeholder="Search contacts..."
+                value={contactSearchQuery}
+                onChangeText={setContactSearchQuery}
+                clearButtonMode="while-editing"
+              />
+            </View>
+
             {isLoading ? (
               <View className="flex-1 justify-center items-center">
                 <ActivityIndicator size="large" color="#3B82F6" />
               </View>
             ) : (
               <FlatList
-                data={availableContacts}
+                data={filteredContacts}
                 renderItem={renderContactItem}
                 keyExtractor={(item) => item.id}
                 ListEmptyComponent={
                   <View className="p-4 items-center justify-center">
-                    <Text className="text-gray-500">No contacts found</Text>
+                    <Text className="text-gray-500">
+                      {contactSearchQuery.trim() !== ""
+                        ? "No matching contacts found"
+                        : "No contacts found"}
+                    </Text>
                   </View>
                 }
               />
@@ -476,7 +731,17 @@ export default function CampaignBuilder() {
 
       <ScrollView>
         <View className="p-4 bg-white border-b border-gray-200">
-          <Text className="text-2xl font-bold mb-4">Campaign Builder</Text>
+          <View className="flex-row items-center mb-4">
+            <TouchableOpacity
+              onPress={() => router.push("/components/CampaignListScreen")}
+              className="p-2 mr-2"
+            >
+              <ArrowLeft size={24} color="#4B5563" />
+            </TouchableOpacity>
+            <Text className="text-2xl font-bold">
+              {campaignId ? "Edit Campaign" : "Create Campaign"}
+            </Text>
+          </View>
 
           {/* Campaign Name */}
           <View className="mb-4">
@@ -540,7 +805,7 @@ export default function CampaignBuilder() {
 
             {showTemplates && (
               <View className="mb-4 border border-gray-300 rounded-lg bg-white">
-                {DUMMY_TEMPLATES.map((template) => (
+                {templates.map((template) => (
                   <TouchableOpacity
                     key={template.id}
                     className="p-3 border-b border-gray-200"
@@ -618,9 +883,10 @@ export default function CampaignBuilder() {
             <Button
               variant="default"
               className="flex-1"
+              onPress={handleScheduleCampaign}
               disabled={isLoading || isSending}
             >
-              <Clock size={20} color="white" className="mr-2" />
+              <Calendar size={20} color="white" className="mr-2" />
               <Text className="text-white">Schedule</Text>
             </Button>
           </View>

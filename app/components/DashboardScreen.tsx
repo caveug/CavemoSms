@@ -193,6 +193,10 @@ export default function DashboardScreen() {
     router.push("/components/ImportContactsScreen");
   };
 
+  const handleSchedulingScreen = () => {
+    router.push("/components/SchedulingScreen");
+  };
+
   const handleViewAllCampaigns = () => {
     router.push("/components/CampaignListScreen");
   };
@@ -254,7 +258,7 @@ export default function DashboardScreen() {
 
         <TouchableOpacity
           className="w-[48%] bg-blue-50 p-4 rounded-lg mb-3 border border-blue-100"
-          onPress={() => router.push("/components/SchedulingScreen")}
+          onPress={handleSchedulingScreen}
         >
           <View className="flex-row justify-between items-center mb-2">
             <Text className="text-blue-800 font-medium">Scheduled</Text>
@@ -329,7 +333,10 @@ export default function DashboardScreen() {
             key={campaign.id}
             className="bg-gray-50 rounded-lg p-4 mb-3 border border-gray-200"
             onPress={() =>
-              router.push(`/components/CampaignBuilder?id=${campaign.id}`)
+              router.push({
+                pathname: "/components/CampaignBuilder",
+                params: { campaignId: campaign.id },
+              })
             }
           >
             <View className="flex-row justify-between items-center mb-1">

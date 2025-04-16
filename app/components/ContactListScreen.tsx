@@ -309,7 +309,9 @@ export default function ContactListScreen() {
     // Navigate to campaign builder with selected contacts
     router.push({
       pathname: "/components/CampaignBuilder",
-      params: { selectedContacts: JSON.stringify(selectedContacts) },
+      params: {
+        selectedContacts: JSON.stringify(selectedContacts),
+      },
     });
   };
 

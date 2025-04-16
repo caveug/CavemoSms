@@ -82,11 +82,35 @@ export default function ImportContactsScreen() {
         return;
       }
 
-      if (parsedData && parsedData.length > 0) {
-        setPreviewData(parsedData);
+      console.log("Parsed data:", parsedData);
+
+      if (parsedData && Array.isArray(parsedData) && parsedData.length > 0) {
+        // Filter out empty objects or rows
+        const filteredData = parsedData.filter((row) => {
+          // Check if row is an object with at least one non-empty property
+          return (
+            typeof row === "object" &&
+            row !== null &&
+            Object.keys(row).length > 0 &&
+            Object.values(row).some(
+              (val) => val !== undefined && val !== null && val !== "",
+            )
+          );
+        });
+
+        if (filteredData.length === 0) {
+          Alert.alert(
+            "Empty File",
+            "The selected file contains no valid data.",
+          );
+          setLoading(false);
+          return;
+        }
+
+        setPreviewData(filteredData);
 
         // Extract column headers
-        const columns = Object.keys(parsedData[0]);
+        const columns = Object.keys(filteredData[0]);
         setFileColumns(columns);
 
         // Try to auto-map fields
@@ -124,7 +148,10 @@ export default function ImportContactsScreen() {
         setFileSelected(true);
         setStep("preview");
       } else {
-        Alert.alert("Empty File", "The selected file contains no data.");
+        Alert.alert(
+          "Empty File",
+          "The selected file contains no data or is in an invalid format.",
+        );
       }
     } catch (error) {
       console.error("Error selecting file:", error);
